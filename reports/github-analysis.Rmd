@@ -1,0 +1,286 @@
+---
+title: "Commits do GitHub (2016-2017)"
+output:
+    html_document:
+        code_folding: hide
+        theme: flatly
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(here)
+library(tidyverse)
+library(lubridate)
+library(timeDate)
+library(resample)
+library(plotly)
+
+theme_set(theme_bw())
+
+```
+
+# Os Dados
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+readr::read_csv(here::here("data/github-users-committing-filetypes.csv"),
+                      progress = FALSE,
+                      col_types = cols(
+                        file_extension = col_character(),
+                        month_day = col_integer(),
+                        the_month = col_integer(),
+                        the_year = col_integer(),
+                        users = col_integer()
+                        )) -> data
+```
+
+```
+file_extension: A extensão do arquivo.
+```
+```{r}
+data %>% select(file_extension) %>% unique
+```
+
+Como é possível ver no resumo acima, temos extensões para scripts, imagens, textos, etc.
+
+```
+month_day, the_month, the_year: Dia, mês e ano respectivamente em que a coleta dos dados foi efetuada.
+```
+```{r}
+data %>% select(-file_extension, -users) %>% summary()
+```
+
+Temos dados desde 2016 até 2017, como falado anteriormente.
+
+```
+users: Quantidade de usuários que modificaram aquele tipo de arquivo até a data da coleta.
+```
+```{r}
+data %>% select(users) %>% summary()
+```
+
+Como possível visualizar acima, temos tipos de arquivos que tiveram __501__ usuários mas também temos outros que tiveram __10279__ usuários.
+
+# Filtrando...
+
+Como temos 42 tipos de arquivos diferentes, iremos selecionar apenas 2 para a nossa análise, que serão __js (JavaScript)__ e __py (Python)__.
+
+```{r}
+languages <- data %>%
+              filter(file_extension %in% c("py","js"))
+```
+
+# Trabalhando nos dados
+
+Para a nossa análise teremos que ter duas novas variáveis, que são __popularity__ e __is_weekend__, que irão descrever quão popular é um arquivo e se a data da coleta corresponde a um fim de semana, respectivamente.
+
+## Popularity
+
+Para popularidade não teremos tanto trabalho, iremos adotar a popularidade como sendo a mediana de usuários que contribuíram. Ou seja, quanto maior a média, mais popular é aquela linguagem.
+
+## Is Weekend
+
+A partir das variáveis ```month_day```, ```the_month``` e ```the_year``` iremos descobrir se a data se refere a um fim de semana ou não.
+
+Para isso, utilizaremos as bibliotecas ```lubridate``` e ```timeDate```.
+
+```{r}
+languages %>%
+  mutate(cronology = lubridate::ymd(paste(the_year,
+                         the_month,
+                         month_day)),
+         is_weekend = timeDate::isWeekend(cronology)) -> languages
+
+languages %>%
+  sample_n(10)
+```
+
+# Como se comportam as linguagens em termos de Popularidade?
+
+```{r}
+languages %>%
+  group_by(file_extension, is_weekend) %>%
+  summarise(popularity = median(users)) %>%
+  ggplot(aes(
+    x = reorder(file_extension, popularity),
+    y = popularity,
+    fill = is_weekend)) + 
+  geom_bar(stat = "identity") + 
+  labs(x = "File extension", y = "Popularity") -> p
+
+ggplotly(p)
+```
+
+Na visualização acima conseguimos perceber que __JavaScript__ apresenta uma popularidade maior tanto nos dias de semana como nos finais de semana em relação a __Python__.
+
+# Como se comportam as alterações em uma linguagem de programação durante o tempo?
+
+```{r}
+languages %>% 
+  ggplot(aes(
+      x = cronology,
+      y = users,
+      color = is_weekend)) +
+    geom_point() +
+    facet_wrap(~file_extension) +
+    labs(x = "Cronology", y = "Users") -> p
+
+ggplotly(p)
+```
+
+Como é possível ver, ambas as linguagens possuem um comportamento semelhate, um crescimento rápido depois uma queda, mais uma subida e por fim uma queda nas edições dos ultimos meses. 
+
+Uma coisa bastante interessante é perceber que as alterações tanto em __Python__ como em __JavaScript__ apresentam um comportamento bastante semelhante quando feitas em finais de semana ou não.
+
+# Será que as linguagens possuem uma diferença significativa na popularidade durante a semana e o fim de semana?
+
+Para isso, iremos analisar as linguagens separadamente...
+
+## JavaScript
+
+```{r}
+languages %>%
+  filter(file_extension == "js") %>%
+  ggplot(aes(
+    x = is_weekend, 
+    y = users,
+    group = is_weekend, 
+    fill = is_weekend)) + 
+  geom_boxplot() +
+  labs(y = "Number of editing users") +
+  ggtitle("JavaScript popularity (weekdays vs weekend)") +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) -> p
+
+ggplotly(p)
+```
+
+Com a visualização, podemos entender que os desenvolvedores __JavaScript__ costumam trabalhar durante a semana. 
+
+Como se trata de uma amostra e com alguns dados faltantes, não podemos concluir com tanta confiança. 
+
+Para isso, iremos utilizar a técnica de _Bootstrapping_ para nos ajudar com a diferença não pareada entre a popularidade durante a semana e no fim de semana.
+
+### Bootstrapping - JavaScript
+
+```{r}
+languages %>%
+  filter(file_extension == "js") -> js
+
+b.diff.means <- bootstrap2(js$users, 
+                          treatment = js$is_weekend, 
+                          median, R = 10000)
+
+means.diff = CI.percentile(b.diff.means, probs = c(.025, .975))
+means.diff
+
+data.frame(means.diff) %>%
+  ggplot(aes(
+    x = "Difference",
+    ymin = X2.5., 
+    ymax = X97.5.)) +
+  geom_errorbar(width = .2) +
+  geom_hline(yintercept = 0, colour = "red") +
+  labs(x = "")
+```
+
+O C.I. nos mostra que __JavaScript__ é bem mais popular durante a semana, pois o intervalo é bem acima de 0. Isso de fato era esperado, dado as visualizações anteriores e também (intuitivamente) as empresas que utilizam __JavaScript__ geralmente tem o seu ciclo de trabalho apenas durante a semana. 
+
+Portanto, podemos afirmar com __95%__ de confiança que __JavaScript__ é mais popular durante a semana, dado que o intervalo de confiança da diferença não pareada para popularidade na semana e no fim de semana não passa pelo eixo ```y = 0```.
+
+## Python
+
+```{r}
+languages %>%
+  filter(file_extension == "py") %>%
+  ggplot(aes(
+    x = is_weekend, 
+    y = users,
+    group = is_weekend, 
+    fill = is_weekend)) + 
+  geom_boxplot() +
+  labs(y = "Number of editing users") +
+  ggtitle("Python popularity (weekdays vs weekend)") +
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) -> p
+
+ggplotly(p)
+```
+
+Com a visualização, podemos entender que os desenvolvedores __Python__ também costumam trabalhar bem mais durante a semana. 
+
+### Bootstrapping - Python
+
+```{r}
+languages %>%
+  filter(file_extension == "py") -> py
+
+b.diff.means <- bootstrap2(py$users, 
+                          treatment = py$is_weekend, 
+                          median, R = 10000)
+
+means.diff = CI.percentile(b.diff.means, probs = c(.025, .975))
+means.diff
+
+data.frame(means.diff) %>%
+  ggplot(aes(
+    x = "Difference",
+    ymin = X2.5., 
+    ymax = X97.5.)) +
+  geom_errorbar(width = .2) +
+  geom_hline(yintercept = 0, colour = "cyan") +
+  labs(x = "")
+```
+
+O C.I. nos mostra que __Python__ também é bem mais popular durante a semana, pois o intervalo é bem acima de 0. Isso de fato também era esperado.
+
+Portanto, de forma semelhante, podemos afirmar com __95%__ de confiança que __Python__ é mais popular durante a semana, dado que o intervalo de confiança da diferença não pareada para popularidade na semana e no fim de semana não passa pelo eixo ```y = 0```.
+
+# Existe uma diferença significativa entre a popularidade das duas linguagens nos fins de semana?
+
+```{r}
+languages %>% 
+  filter(is_weekend) %>%
+  ggplot(aes(
+    x = file_extension, 
+    y = users,
+    group = file_extension, 
+    fill = file_extension)) + 
+  geom_boxplot() +
+  ggtitle("Python vs JavaScript (Weekends)") +
+    theme(axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  labs(y = "Number of users editing files")
+```
+
+Dada a visualização acima, podemos ver que __JavaScript__ é bem mais popular que __Python__.
+
+Utilizando a mesma técnica para _Bootstrapping_...
+
+## Bootstrapping
+
+```{r}
+languages %>%
+  filter(is_weekend) -> weekend
+
+b.diff.means <- bootstrap2(weekend$users, 
+                          treatment = weekend$file_extension, 
+                          median, R = 10000)
+
+means.diff = CI.percentile(b.diff.means, probs = c(.025, .975))
+means.diff
+
+data.frame(means.diff) %>%
+  ggplot(aes(
+    x = "Difference",
+    ymin = X2.5., 
+    ymax = X97.5.)) +
+  geom_errorbar(width = .2) +
+  geom_hline(yintercept = 0, colour = "brown") +
+  labs(x = "")
+```
+
+A diferença entre a popularidade existe sim. Podemos concluir que __JavaScript__ é mais popular em finais de semana em relação a __Python__, como também pudemos perceber nas demais visualizações acima.
+
+Portanto, observando os intervalos de confiança para as diferenças não pareadas entre __JavaScript__ e __Python__ durante os finais de semana, podemos dizer com um grau de confiança de __95%__ que __JavaScript__ é significativamente mais popular que __Python__ nos fins de semana.

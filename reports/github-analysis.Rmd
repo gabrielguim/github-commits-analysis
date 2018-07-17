@@ -104,7 +104,7 @@ languages %>%
     y = popularity,
     fill = is_weekend)) + 
   geom_bar(stat = "identity") + 
-  labs(x = "File extension", y = "Popularity") -> p
+  labs(x = "Linguagem de Programação", y = "Popularidade") -> p
 
 ggplotly(p)
 ```
@@ -121,7 +121,7 @@ languages %>%
       color = is_weekend)) +
     geom_point() +
     facet_wrap(~file_extension) +
-    labs(x = "Cronology", y = "Users") -> p
+    labs(x = "Cronologia", y = "Usuários") -> p
 
 ggplotly(p)
 ```
@@ -145,8 +145,8 @@ languages %>%
     group = is_weekend, 
     fill = is_weekend)) + 
   geom_boxplot() +
-  labs(y = "Number of editing users") +
-  ggtitle("JavaScript popularity (weekdays vs weekend)") +
+  labs(y = "Número de usuários") +
+  ggtitle("Popularidade de JavaScript (dias úteis vs fim de semana)") +
   theme(axis.title.x = element_blank(),
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank()) -> p
@@ -175,7 +175,7 @@ means.diff
 
 data.frame(means.diff) %>%
   ggplot(aes(
-    x = "Difference",
+    x = "Diferença",
     ymin = X2.5., 
     ymax = X97.5.)) +
   geom_errorbar(width = .2) +

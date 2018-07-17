@@ -1,0 +1,543 @@
+---
+title: "Mais perguntas sobre o GitHub (2016-2017)"
+output:
+    html_document:
+        code_folding: hide
+        theme: flatly
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(here)
+library(tidyverse)
+library(lubridate)
+library(timeDate)
+library(resample)
+library(boot)
+library(plotly)
+
+theme_set(theme_bw())
+
+```
+
+# Os Dados
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+readr::read_csv(here::here("data/github-users-committing-filetypes.csv"),
+                      progress = FALSE,
+                      col_types = cols(
+                        file_extension = col_character(),
+                        month_day = col_integer(),
+                        the_month = col_integer(),
+                        the_year = col_integer(),
+                        users = col_integer()
+                        )) -> data
+
+some_programming_languages <- c("js", "py", "java", "php", "go", "rb", "c", "go", "ts", "swift", "cc")
+```
+
+```
+file_extension: A extensão do arquivo.
+```
+```{r}
+data %>% select(file_extension) %>% unique
+```
+
+Como é possível ver no resumo acima, temos extensões para scripts, imagens, textos, etc.
+
+```
+month_day, the_month, the_year: Dia, mês e ano respectivamente em que a coleta dos dados foi efetuada.
+```
+```{r}
+data %>% select(-file_extension, -users) %>% summary()
+```
+
+Temos dados desde 2016 até 2017, como falado anteriormente.
+
+```
+users: Quantidade de usuários que modificaram aquele tipo de arquivo até a data da coleta.
+```
+```{r}
+data %>% select(users) %>% summary()
+```
+
+Como possível visualizar acima, temos tipos de arquivos que tiveram __501__ usuários mas também temos outros que tiveram __10279__ usuários.
+
+# Conceitos
+
+## Popularity
+
+Para popularidade não teremos tanto trabalho, iremos adotar a popularidade como sendo a mediana de usuários que contribuíram. Ou seja, quanto maior a média, mais popular é aquela linguagem.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data %>%
+  mutate(cronology = lubridate::ymd(paste(the_year,
+                         the_month,
+                         month_day))) -> languages
+```
+
+# Perguntas
+
+## Para as duas linguagens de programação mais "populares" do ultimo mês do registro, como que se comportou o crescimento delas durante cada mês?
+
+Para isso, iremos pegar as linguagens de programação no nosso conjunto de dados e a partir disso selecionar apenas as que tiveram registros no último mês. 
+
+Após a aplicação de uma função ```max```, obtivemos o valor:
+```{r}
+languages %>% 
+  filter(file_extension %in% some_programming_languages) %>%
+  filter(the_year == 2017) %>%
+  select(the_month) %>%
+  sapply(max, na.rm = TRUE)
+
+```
+
+Portanto, sabemos que o último mês de 2017 que tivemos registros foi o mês 5.
+
+### Panorama geral de Popularidade
+
+```{r}
+languages %>% 
+  filter(file_extension %in% some_programming_languages) %>%
+  group_by(file_extension) %>%
+  summarise(popularity = median(users)) %>%
+    ggplot(aes(
+      x = reorder(file_extension, popularity),
+      y = popularity,
+      fill = file_extension)) + 
+    geom_bar(stat = "identity") + 
+    labs(x = "Linguagem de Programação", y = "Popularidade") +
+    guides(fill=guide_legend(title=NULL)) -> p
+
+ggplotly(p)
+  
+```
+
+### Visualização apenas para o último mês.
+
+```{r}
+languages %>% 
+  filter(file_extension %in% some_programming_languages) %>%
+  filter(the_year == 2017, the_month == 5) %>%
+  group_by(file_extension) %>%
+  summarise(popularity = median(users)) %>%
+    ggplot(aes(
+      x = reorder(file_extension, popularity),
+      y = popularity,
+      fill = file_extension)) + 
+    geom_bar(stat = "identity") + 
+    labs(x = "Linguagem de Programação", y = "Popularidade") +
+    guides(fill=guide_legend(title=NULL)) -> p
+
+ggplotly(p)
+  
+```
+
+Como podemos ver acima, as duas linguagens de programação mais populares foram ```js``` e ```py```, __JavaScript__ e __Python__ respectivamente.
+
+```{r}
+selected_languages <- languages %>% filter(file_extension %in% c("py","js"))
+```
+
+A partir disso, iremos fazer uma comparação mês a mês entre as linguagens __Python__ e __JavaScript__ e verificar como se comporta a diferença de crescimento de usuários.
+  
+```{r}
+set.seed(123)
+
+ic_diff = function(data, group1, group2, period){
+    difference = function(data, i, group1, group2){
+        d = data %>% 
+            slice(i) %>% 
+            group_by(file_extension, the_month, the_year) %>% 
+            summarise(popularity = median(users)) %>%
+            mutate(mmyy = paste(the_month, the_year, sep = "-")) %>%
+            filter(mmyy == period)
+        
+        group1_df <- d %>% filter(file_extension == group1)
+        group2_df <- d %>% filter(file_extension == group2)
+
+        m1 = 0
+        m2 = 0
+        
+        if (nrow(group1_df) != 0) {
+          m1 = group1_df %>% pull(popularity)
+        }
+        
+        if (nrow(group2_df) != 0) {
+          m2 = group2_df %>% pull(popularity)
+        }
+        
+        m1 - m2
+    }
+    
+    bootstrap = boot(data, 
+                     statistic = difference, 
+                     R = 1000,
+                     group1 = group1, 
+                     group2 = group2)
+    
+    ci = boot.ci(bootstrap, 
+                 conf = 0.95, 
+                 type = "basic")
+    ci
+}
+
+languages_2016 <- selected_languages %>% filter(the_year == 2016)
+languages_2017 <- selected_languages %>% filter(the_year == 2017)
+months <- c("JAN", "FEV", "MAR", "ABR", "MAI", "JUN", "JUL", "AGO", "SET", "OUT", "NOV", "DEZ")
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+
+comparacoes = 
+    frame_data(~comparacao, ~ic, ~year,
+        "JAN", ic_diff(languages_2016, "py", "js", "1-2016"), 2016,
+        "FEV", ic_diff(languages_2016, "py", "js", "2-2016"), 2016,
+        "MAR", ic_diff(languages_2016, "py", "js", "3-2016"), 2016,
+        "ABR", ic_diff(languages_2016, "py", "js", "4-2016"), 2016,
+        "MAI", ic_diff(languages_2016, "py", "js", "5-2016"), 2016,
+        "JUN", ic_diff(languages_2016, "py", "js", "6-2016"), 2016,
+        "JUL", ic_diff(languages_2016, "py", "js", "7-2016"), 2016,
+        "AGO", ic_diff(languages_2016, "py", "js", "8-2016"), 2016,
+        "SET", ic_diff(languages_2016, "py", "js", "9-2016"), 2016,
+        "OUT", ic_diff(languages_2016, "py", "js", "10-2016"), 2016,
+        "NOV", ic_diff(languages_2016, "py", "js", "11-2016"), 2016,
+        "DEZ", ic_diff(languages_2016, "py", "js", "12-2016"), 2016,
+        "JAN", ic_diff(languages_2017, "py", "js", "1-2017"), 2017,
+        "FEV", ic_diff(languages_2017, "py", "js", "2-2017"), 2017,
+        "MAR", ic_diff(languages_2017, "py", "js", "3-2017"), 2017,
+        "ABR", ic_diff(languages_2017, "py", "js", "4-2017"), 2017,
+        "MAI", ic_diff(languages_2017, "py", "js", "5-2017"), 2017) %>%
+  mutate(lower = map_dbl(ic, ~ .x$basic[[4]]), 
+         upper = map_dbl(ic, ~ .x$basic[[5]]))
+```
+
+
+```{r}
+set.seed(123)
+
+order_comp <- factor(comparacoes$comparacao, levels = months)
+
+comparacoes %>% 
+    ggplot() + 
+    aes(x = order_comp, ymin = lower, ymax = upper) + 
+    geom_hline(yintercept = 0, colour = "red") + 
+    geom_errorbar(width = .5) + 
+    labs(x = "Mês", 
+         y = "Diferença de Popularidade (py - js)") +
+    facet_wrap(~year, scales = "free") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+Em todos os meses, exceto em __MAIO__ de __2017__, com um grau de confiança de 95%, a linguagem __JavaScript__ é superior em popularidade em relação a __Python__, visto que a diferença ```(py - js)``` é negativa, ou seja, ```js > py```.
+
+## E para as duas menos populares?
+
+De forma análoga, as duas linguagens de programação menos populares para o último mês foram ```ts``` e ```go```, __TypeScript__ e __GO__ respectivamente.
+
+```{r}
+selected_languages_v2 <- languages %>% filter(file_extension %in% c("ts","go"))
+```
+
+Para responder nossa pergunta, iremos executar os mesmos passos da pergunta anterior.
+
+```{r}
+set.seed(123)
+
+languages_2016_v2 <- selected_languages_v2 %>% filter(the_year == 2016)
+languages_2017_v2 <- selected_languages_v2 %>% filter(the_year == 2017)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+
+comparacoes_v2 = 
+    frame_data(~comparacao, ~ic, ~year,
+        "JAN", ic_diff(languages_2016_v2, "go", "ts", "1-2016"), 2016,
+        "FEV", ic_diff(languages_2016_v2, "go", "ts", "2-2016"), 2016,
+        "MAR", ic_diff(languages_2016_v2, "go", "ts", "3-2016"), 2016,
+        "ABR", ic_diff(languages_2016_v2, "go", "ts", "4-2016"), 2016,
+        "MAI", ic_diff(languages_2016_v2, "go", "ts", "5-2016"), 2016,
+        "JUN", ic_diff(languages_2016_v2, "go", "ts", "6-2016"), 2016,
+        "JUL", ic_diff(languages_2016_v2, "go", "ts", "7-2016"), 2016,
+        "AGO", ic_diff(languages_2016_v2, "go", "ts", "8-2016"), 2016,
+        "SET", ic_diff(languages_2016_v2, "go", "ts", "9-2016"), 2016,
+        "OUT", ic_diff(languages_2016_v2, "go", "ts", "10-2016"), 2016,
+        "NOV", ic_diff(languages_2016_v2, "go", "ts", "11-2016"), 2016,
+        "DEZ", ic_diff(languages_2016_v2, "go", "ts", "12-2016"), 2016,
+        "JAN", ic_diff(languages_2017_v2, "go", "ts", "1-2017"), 2017,
+        "FEV", ic_diff(languages_2017_v2, "go", "ts", "2-2017"), 2017,
+        "MAR", ic_diff(languages_2017_v2, "go", "ts", "3-2017"), 2017,
+        "ABR", ic_diff(languages_2017_v2, "go", "ts", "4-2017"), 2017,
+        "MAI", ic_diff(languages_2017_v2, "go", "ts", "5-2017"), 2017) %>%
+  mutate(lower = map_dbl(ic, ~ .x$basic[[4]]), 
+         upper = map_dbl(ic, ~ .x$basic[[5]]))
+```
+
+
+```{r}
+set.seed(123)
+
+order_comp_v2 <- factor(comparacoes_v2$comparacao, levels = months)
+
+comparacoes_v2 %>% 
+    ggplot() + 
+    aes(x = order_comp_v2, ymin = lower, ymax = upper) + 
+    geom_hline(yintercept = 0, colour = "red") + 
+    geom_errorbar(width = .5) + 
+    labs(x = "Mês", 
+         y = "Diferença de Popularidade (go - ts)") +
+    facet_wrap(~year, scales = "free") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+Em todos os meses, exceto em __ABRIL__ de __2017__, com um grau de confiança de 95%, a linguagem __GO__ é superior em popularidade em relação a __TypeScript__, visto que a diferença ```(go - ts)``` é positiva, ou seja, ```go > ts```.
+
+## Os desenvolvedores preferem commitar mais nas segundas e sextas ou nas terças, quartas e quintas?
+
+### Preparando os dados
+
+Vamos coletar dados apenas das linguagens de programação vistas mais acima que tiveram suas coletas em dias da semana (entre segunda e sexta).
+
+```{r}
+seg_sex <- c("segunda-feira", "sexta-feira")
+sab_dom <- c("sábado", "domingo")
+languages %>%
+  mutate(is_seg_sex = weekdays(languages$cronology) %in% seg_sex) %>% 
+  filter(weekdays(languages$cronology) %in% sab_dom != TRUE) %>%
+  filter(file_extension %in% some_programming_languages) -> languages_days
+
+languages_days %>%
+  sample_n(10)
+
+```
+
+### Qual a popularidade de cada linguagem durante esses dois "períodos" da semana?
+
+```{r}
+languages_days %>%
+  group_by(file_extension, is_seg_sex) %>%
+  summarise(popularity = median(users)) %>%
+  ggplot(aes(
+    x = reorder(file_extension, popularity),
+    y = popularity,
+    fill = is_seg_sex)) + 
+  geom_histogram(stat = "identity") + 
+  labs(x = "Linguagem de Programação", y = "Popularidade") -> p
+
+ggplotly(p)
+
+```
+
+Com essa simples visualização conseguimos perceber que os commits costumam ser efetuados entre a Terças, Quartas e Quintas.
+
+### Bootstrapping
+
+Como CC não possui nenhum registro dentro sendo uma __Segunda__ ou __Sexta__, iremos removê-lo do __Bootstrapping__ por não fazer sentido calcular diferença.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE }
+languages_days %>%
+  filter(file_extension == "swift") -> swift
+languages_days %>%
+  filter(file_extension == "ts") -> ts
+languages_days %>%
+  filter(file_extension == "go") -> go
+languages_days %>%
+  filter(file_extension == "c") -> c
+languages_days %>%
+  filter(file_extension == "java") -> java
+languages_days %>%
+  filter(file_extension == "php") -> php
+languages_days %>%
+  filter(file_extension == "py") -> py
+languages_days %>%
+  filter(file_extension == "rb") -> rb
+languages_days %>%
+  filter(file_extension == "js") -> js
+```
+
+### Definindo a função 
+
+Abaixo definimos a função que irá realizar o bootstrapping para cada uma das linguagens e extrair a diferença entre os dois períodos a serem avaliados na semana.
+
+```{r}
+diffs <- frame_data(~lang, ~X2.5., ~X97.5.)
+
+bootstrapping = function(data) {
+  diff_median <- bootstrap2(data$users, 
+                  treatment = data$is_seg_sex, 
+                  median, R = 10000)
+  
+  diff = CI.percentile(diff_median, probs = c(.025, .975))
+  
+  diff
+}
+```
+
+```Diffs``` será o nosso conjunto de dados que irá armazenar a linguagem e o intervalo da diferença gerado pela função de bootstrapping. 
+
+Não irei mostrar o código usado para popular o conjunto de dados mas basicamente usei a função acima e atribuí os intervalos do ```diff``` para as colunas ```X2.5.``` e ```X97.5.``` respectivamente, além de colocar o nome da linguagem na coluna referente.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+boot_swift <- data.frame(bootstrapping(swift))
+add_row(diffs, lang = "swift", X2.5. = boot_swift$X2.5., X97.5. = boot_swift$X97.5.) -> diffs
+
+boot_ts <- data.frame(bootstrapping(ts))
+add_row(diffs, lang = "ts", X2.5. = boot_ts$X2.5., X97.5. = boot_ts$X97.5.) -> diffs
+
+boot_go <- data.frame(bootstrapping(go))
+add_row(diffs, lang = "go", X2.5. = boot_go$X2.5., X97.5. = boot_go$X97.5.) -> diffs
+
+boot_c <- data.frame(bootstrapping(c))
+add_row(diffs, lang = "c", X2.5. = boot_c$X2.5., X97.5. = boot_c$X97.5.) -> diffs
+
+boot_java <- data.frame(bootstrapping(java))
+add_row(diffs, lang = "java", X2.5. = boot_java$X2.5., X97.5. = boot_java$X97.5.) -> diffs
+
+boot_php <- data.frame(bootstrapping(php))
+add_row(diffs, lang = "php", X2.5. = boot_php$X2.5., X97.5. = boot_php$X97.5.) -> diffs
+
+boot_py <- data.frame(bootstrapping(py))
+add_row(diffs, lang = "py", X2.5. = boot_py$X2.5., X97.5. = boot_py$X97.5.) -> diffs
+
+boot_rb <- data.frame(bootstrapping(rb))
+add_row(diffs, lang = "rb", X2.5. = boot_rb$X2.5., X97.5. = boot_rb$X97.5.) -> diffs
+
+boot_js <- data.frame(bootstrapping(js))
+add_row(diffs, lang = "js", X2.5. = boot_js$X2.5., X97.5. = boot_js$X97.5.) -> diffs
+```
+
+```{r}
+diffs %>%
+  ggplot(aes(
+    x = lang,
+    ymin = X2.5., 
+    ymax = X97.5.)) +
+  geom_errorbar(width = .2) +
+  geom_hline(yintercept = 0, colour = "cyan") +
+  labs(x = "Linguagem de Programação", y = "Diferença do is_seg_sex (FALSE - TRUE)")
+```
+
+Com a visualização acima, podemos perceber que por ter um valor majoritariamente positivo, exceto para as linguagens __Swift__ (swift) e __TypeScript__ (ts) que passam pelo eixo ```y = 0```, os valores de usuários que _commitam_ nas Terças, Quartas e Quintas é maior em relação aos que _commitam_ nas Segundas e Sextas.
+
+## E entre Segunda e Sexta, qual o dia mais escolhido?
+
+Para isso, iremos pegar apenas uma parte dos dados que faz referência aos commits em Segundas e Sextas.
+
+```{r}
+seg_sex <- c("segunda-feira", "sexta-feira")
+languages %>%
+  mutate(is_seg = weekdays(languages$cronology) == "segunda-feira") %>% 
+  filter(weekdays(languages$cronology) %in% seg_sex == TRUE) %>%
+  filter(file_extension %in% some_programming_languages) -> languages_days_v2
+
+languages_days_v2 %>%
+  sample_n(10)
+
+```
+
+```{r warning=FALSE}
+languages_days_v2 %>%
+  group_by(file_extension, is_seg) %>%
+  summarise(popularity = median(users)) %>%
+  ggplot(aes(
+    x = reorder(file_extension, popularity),
+    y = popularity,
+    fill = !is_seg)) + 
+  geom_histogram(stat = "identity") + 
+  labs(x = "Linguagem de Programação", y = "Popularidade") -> p
+
+ggplotly(p)
+
+```
+
+Com a visualização acima é possível perceber que o dia mais escolhido é a Sexta feira, pois existe uma maior quantidade de usuários (na maioria das linguagens) para a barra alaranjada.
+
+### Bootstrapping
+
+De forma análoga à questão mais acima, usamos uma outra função para o _bootstrapping_, desta vez trocando apenas a variável que indica se o dia é __Segunda__ ou não. 
+
+Aqui também retiramos a linguagem ```cc``` visto que ela não tem nenhum registro com data de __Segunda__ ou __Sexta__.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+diffs_v2 <- frame_data(~lang, ~X2.5., ~X97.5.)
+
+bootstrapping_v2 = function(data) {
+  diff_median <- bootstrap2(data$users, 
+                  treatment = data$is_seg, 
+                  median, R = 10000)
+  
+  diff = CI.percentile(diff_median, probs = c(.025, .975))
+  
+  diff
+}
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+languages_days_v2 %>%
+  filter(file_extension == "swift") -> swift
+languages_days_v2 %>%
+  filter(file_extension == "ts") -> ts
+languages_days_v2 %>%
+  filter(file_extension == "go") -> go
+languages_days_v2 %>%
+  filter(file_extension == "c") -> c
+languages_days_v2 %>%
+  filter(file_extension == "java") -> java
+languages_days_v2 %>%
+  filter(file_extension == "php") -> php
+languages_days_v2 %>%
+  filter(file_extension == "py") -> py
+languages_days_v2 %>%
+  filter(file_extension == "rb") -> rb
+languages_days_v2 %>%
+  filter(file_extension == "js") -> js
+
+boot_swift <- data.frame(bootstrapping_v2(swift))
+add_row(diffs_v2, lang = "swift", X2.5. = boot_swift$X2.5., X97.5. = boot_swift$X97.5.) -> diffs_v2
+
+boot_ts <- data.frame(bootstrapping_v2(ts))
+add_row(diffs_v2, lang = "ts", X2.5. = boot_ts$X2.5., X97.5. = boot_ts$X97.5.) -> diffs_v2
+
+boot_go <- data.frame(bootstrapping_v2(go))
+add_row(diffs_v2, lang = "go", X2.5. = boot_go$X2.5., X97.5. = boot_go$X97.5.) -> diffs_v2
+
+boot_c <- data.frame(bootstrapping_v2(c))
+add_row(diffs_v2, lang = "c", X2.5. = boot_c$X2.5., X97.5. = boot_c$X97.5.) -> diffs_v2
+
+boot_java <- data.frame(bootstrapping_v2(java))
+add_row(diffs_v2, lang = "java", X2.5. = boot_java$X2.5., X97.5. = boot_java$X97.5.) -> diffs_v2
+
+boot_php <- data.frame(bootstrapping_v2(php))
+add_row(diffs_v2, lang = "php", X2.5. = boot_php$X2.5., X97.5. = boot_php$X97.5.) -> diffs_v2
+
+boot_py <- data.frame(bootstrapping_v2(py))
+add_row(diffs_v2, lang = "py", X2.5. = boot_py$X2.5., X97.5. = boot_py$X97.5.) -> diffs_v2
+
+boot_rb <- data.frame(bootstrapping_v2(rb))
+add_row(diffs_v2, lang = "rb", X2.5. = boot_rb$X2.5., X97.5. = boot_rb$X97.5.) -> diffs_v2
+
+boot_js <- data.frame(bootstrapping_v2(js))
+add_row(diffs_v2, lang = "js", X2.5. = boot_js$X2.5., X97.5. = boot_js$X97.5.) -> diffs_v2
+```
+
+```{r}
+diffs_v2 %>%
+  ggplot(aes(
+    x = lang,
+    ymin = X2.5., 
+    ymax = X97.5.)) +
+  geom_errorbar(width = .2) +
+  geom_hline(yintercept = 0, colour = "cyan") +
+  labs(x = "Linguagem de Programação", y = "Diferença do is_seg (FALSE - TRUE)")
+```
+
+Com a visualização acima, não conseguimos chegar a muitos resultados pois aproximadamente ```77% (7 de 9)``` das linguagens passam o eixo ```y = 0```. Podemos concluir apenas para as linguagens __JavaScript__ (js) e __PHP__ (php) que o dia mais escolhido para os _commits_ é a __Segunda__, visto que a diferença é negativa, pois se ```FALSE - TRUE < 0```, implica dizer que ```TRUE > FALSE```.
+
+Portanto, a __Segunda__ é o dia mais escolhido __apenas__ para __JavaScript__ (js) e __PHP__ (php). Enquanto que para as demais linguagens, nada podemos concluir.

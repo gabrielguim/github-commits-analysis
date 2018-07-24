@@ -1,0 +1,163 @@
+---
+title: "Teste de Hipótese com GitHub (2016-2017)"
+output:
+    html_document:
+        code_folding: hide
+        theme: flatly
+---
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(here)
+library(lubridate)
+library(timeDate)
+library(tidyverse)
+
+theme_set(theme_bw())
+
+```
+
+# Os Dados
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+readr::read_csv(here::here("data/github-users-committing-filetypes.csv"),
+                      progress = FALSE,
+                      col_types = cols(
+                        file_extension = col_character(),
+                        month_day = col_integer(),
+                        the_month = col_integer(),
+                        the_year = col_integer(),
+                        users = col_integer()
+                        )) -> data
+
+set.seed(123)
+some_programming_languages <- c("js", "py", "java", "php", "go", "rb", "c", "go", "ts", "swift")
+```
+
+```
+file_extension: A extensão do arquivo.
+```
+```{r}
+data %>% select(file_extension) %>% unique
+```
+
+Como é possível ver no resumo acima, temos extensões para scripts, imagens, textos, etc.
+
+```
+month_day, the_month, the_year: Dia, mês e ano respectivamente em que a coleta dos dados foi efetuada.
+```
+```{r}
+data %>% select(-file_extension, -users) %>% summary()
+```
+
+Temos dados desde 2016 até 2017, como falado anteriormente.
+
+```
+users: Quantidade de usuários que modificaram aquele tipo de arquivo até a data da coleta.
+```
+```{r}
+data %>% select(users) %>% summary()
+```
+
+Como possível visualizar acima, temos tipos de arquivos que tiveram __501__ usuários mas também temos outros que tiveram __10279__ usuários.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data %>%
+  mutate(cronology = lubridate::ymd(paste(the_year,
+                         the_month,
+                         month_day))) -> languages
+```
+
+# Conceitos
+
+## Hipótese Nula
+
+É a hipótese assumida como verdadeira para a construção do teste. É uma hipótese que é apresentada sobre determinados eventos estatísticos e cuja falsidade se tenta provar através de um teste de hipóteses.
+
+## Teste de permutação
+
+A partir de um processo aleatório, criamos uma amostra em que não há associação e portanto, geramos a hipótese nula.
+
+## Teste de Hipótese
+
+É um procedimento estatístico que permite tomar uma decisão (aceitar ou rejeitar a hipótese nula) entre duas ou mais hipóteses (hipótese nula ou hipótese alternativa), utilizando os dados observados de um determinado experimento.
+
+## P-Valor
+
+O _p-valor_ é a probabilidade de se obter uma estatística de teste igual ou mais extrema que aquela observada em uma amostra, sob a hipótese nula. 
+
+Uma outra interpretação para o _p-valor_, é que é menor nível de significância com que se rejeitaria a hipótese nula. Em outras palavras, um _p-valor_ pequeno significa que a probabilidade de obter um valor da estatística de teste como o observado é muito improvável, por isso a hipótese nula é rejeitada.
+
+## Nível de Significância - Alfa
+
+É o limite que se toma como base para afirmar que uma certa diferença é decorrente do acaso ou
+não. Em outras palavras, é a probabilidade de rejeitar a hipótese nula quando ela é verdadeira. Por exemplo, um nível de significância de 0,05 indica um risco de 5% de concluir que existe uma diferença quando não há diferença real.
+
+# Pergunta 
+
+## Existe uma diferença entre a quantidade de commits efetuados quando comparamos os dias de segundas e sextas com as terças, quartas e quintas?
+
+Para responder a esta pergunta iremos utilizar apenas commits realizados em arquivos que são de linguagens de programação.
+
+```{r}
+languages %>% 
+  filter(file_extension %in% some_programming_languages) %>%
+  group_by(file_extension) %>%
+  summarise(users_mean = mean(users)) %>%
+    ggplot(aes(
+      x = reorder(file_extension, users_mean),
+      y = users_mean,
+      fill = file_extension)) + 
+    geom_bar(stat = "identity") + 
+    labs(x = "Linguagem de Programação", y = "Média de Usuários") +
+    guides(fill=guide_legend(title=NULL))
+
+```
+
+Além disso, iremos utilizar como _estimador_ a diferença não pareada (TRUE-FALSE) indicando se é Segunda e Sexta ou não (Se for Terça, Quarta ou Quinta).
+
+```{r}
+seg_sex <- c("segunda-feira", "sexta-feira")
+sab_dom <- c("sábado", "domingo")
+languages %>%
+  mutate(days = if_else(weekdays(languages$cronology) %in% seg_sex, "SEG-SEX", "TER-QUA-QUI")) %>% 
+  filter(weekdays(languages$cronology) %in% sab_dom != TRUE) %>%
+  filter(file_extension %in% some_programming_languages) -> languages_days
+
+languages_days %>%
+  sample_n(10)
+
+```
+
+## Definições
+
+### Hipótese Nula
+
+Não existe diferença significativa entre a quantidade de commits efetuados entre os dias de segundas e sextas e os dias de terças, quartas e quintas.
+
+### Hipótese Alternativa
+
+Existe diferença significativa entre a quantidade de commits efetuados entre os dias de segundas e sextas e os dias de terças, quartas e quintas.
+
+Vamos coletar dados apenas das linguagens de programação vistas mais acima que tiveram suas coletas em dias da semana (entre segunda e sexta).
+
+### Nível de Confiança - Alfa
+
+Usaremos um alfa igual a 0.05 (5%).
+
+### Respondendo...
+
+```{r}
+library(resample)
+
+languages_days %>%
+  permutationTest2(statistic = mean(users), 
+                   treatment = days)
+```
+
+O __p-valor__ indicado após a execução do teste de permutação é deveras menor que o nosso nível de confiança (alfa) o que indica que a associação de fato está presente, ou seja, com 95% de confiança nós rejeitamos a __hipótese nula__ _(de que não existe diferença significativa entre a quantidade de commits efetuados entre os dias de segundas e sextas e os dias de terças, quartas e quintas)_. Em outras palavras, por dupla negação, não podemos afirmar que não há diferença e portanto, dizemos que há diferença. 
+
+### Comparando com CI...
+
+Ambas as técnicas são de naturezas semelhantes, portanto, espera-se que os resultados encontrados sejam parecidos. 
+
+Uma coisa interessante a se mencionar é que no caso de Teste de Hipótese não temos informações suficientes para dizer algo a respeito da relevância ou magnitude das diferenças, apenas podemos dizer se existe ou não. Enquanto que com CI, podemos dizer além do efeito, a sua relevância.
